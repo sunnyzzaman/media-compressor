@@ -7,8 +7,8 @@
   
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+  <script src="./ffmpeg.js"></script>
+  <script src="./util.js"></script>
 
   <style>
     body { background: #f3f4f6; }
@@ -93,7 +93,6 @@
   </main>
 
   <script>
-    // 1. Immediately Setup UI Elements
     const $ = s => document.querySelector(s);
     const logEl = $('#log');
     const startBtn = $('#startBtn');
@@ -123,7 +122,6 @@
 
     $('#clearLog').addEventListener('click', () => logEl.innerHTML = '');
 
-    // UI Toggles
     modeSelect.addEventListener('change', (e) => {
       if (e.target.value === 'compress') {
         targetMbContainer.classList.remove('hidden');
@@ -132,7 +130,6 @@
       }
     });
 
-    // 2. Make the Dropzone Clickable Immediately
     dropzone.addEventListener('click', () => fileInput.click());
     dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('border-blue-500', 'bg-blue-50'); });
     dropzone.addEventListener('dragleave', e => { dropzone.classList.remove('border-blue-500', 'bg-blue-50'); });
@@ -157,7 +154,6 @@
       downloadBtn.classList.add('hidden');
       log(`Selected: ${file.name}`, 'log-info');
 
-      // Extract duration quickly for the compression math
       const videoElement = document.createElement('video');
       videoElement.preload = 'metadata';
       videoElement.onloadedmetadata = () => {
@@ -167,16 +163,15 @@
       videoElement.src = window.URL.createObjectURL(file);
     }
 
-    // 3. Load FFmpeg securely (Single-Threaded for GitHub Pages)
     async function loadFFmpeg() {
       if (ffmpeg) return;
       
       if (!window.FFmpeg) {
-        throw new Error("FFmpeg failed to load. Please check your internet connection or adblocker.");
+        throw new Error("FFmpeg failed to load. Please make sure ffmpeg.js and util.js are uploaded to your GitHub repository.");
       }
 
       const { FFmpeg } = window.FFmpeg;
-      log('Loading FFmpeg engine. This takes a few seconds on the first run...', 'log-info');
+      log('Loading local FFmpeg engine...', 'log-info');
       ffmpeg = new FFmpeg();
       
       ffmpeg.on('log', ({ message }) => {
@@ -191,15 +186,14 @@
         progressText.textContent = `${pct}%`;
       });
 
-      // Explicitly loading the single-threaded core which works perfectly on GitHub Pages
+      // Loading the core engine locally from your repository
       await ffmpeg.load({
-        coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
-        wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
+        coreURL: './ffmpeg-core.js',
+        wasmURL: './ffmpeg-core.wasm'
       });
       log('FFmpeg engine loaded successfully!', 'log-success');
     }
 
-    // 4. Main Process Execution
     startBtn.addEventListener('click', async () => {
       if (!selectedFile) return;
       
@@ -232,7 +226,6 @@
             ffmpegArgs = ['-i', inputName, '-vcodec', 'libx264', '-crf', '28', outputName];
           } else {
             const targetMB = parseFloat(targetMBInput.value);
-            // Math to determine exactly how hard to compress the file
             let targetVideoBitrate = Math.floor(((targetMB * 8192) / videoDuration) - 128);
             
             if (targetVideoBitrate < 50) {
@@ -270,7 +263,6 @@
         progressText.textContent = '100%';
         downloadBtn.classList.remove('hidden');
         
-        // Clean up internal memory so the browser doesn't crash on the next file
         await ffmpeg.deleteFile(inputName);
         await ffmpeg.deleteFile(outputName);
 
@@ -284,5 +276,4 @@
     });
   </script>
 </body>
-
 </html>
