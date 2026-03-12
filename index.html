@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Video Compressor & MP3 Converter</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+  <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+
+  <style>
+    body { background: #f3f4f6; }
+    .terminal {
+      background: linear-gradient(180deg,#071020,#05101a);
+      color: #cbd5e1;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      font-size: 13px;
+      padding: 12px;
+      border-radius: 8px;
+      overflow: auto;
+      max-height: 250px;
+    }
+    .log-info { color: #7dd3fc; }
+    .log-error { color: #ff7675; }
+    .log-success { color: #86efac; }
+  </style>
+</head>
+<body class="p-6">
+  <main class="max-w-4xl mx-auto bg-white rounded-xl shadow p-6">
+    <header class="mb-6 border-b pb-4">
+      <h1 class="text-2xl font-semibold text-gray-800">Media Converter & Compressor</h1>
+      <div class="text-sm text-gray-500 mt-1">Runs locally in your browser via GitHub Pages. Powered by FFmpeg.wasm.</div>
+    </header>
+
+    <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Drop a Video File (.mp4, .mov, .webm)</label>
+        <div id="dropzone" class="border-2 border-dashed border-gray-300 p-6 rounded text-center cursor-pointer hover:border-blue-500 transition-colors bg-gray-50">
+          <input id="fileInput" type="file" accept="video/*" class="hidden" />
+          <svg class="mx-auto h-12 w-12 text-gray-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+          <div class="text-gray-600 text-sm font-medium">Click to browse or drag file here</div>
+          <div id="fileName" class="mt-2 text-xs text-blue-600 font-semibold truncate hidden"></div>
+        </div>
+
+        <div class="mt-5 space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Operation</label>
+            <select id="modeSelect" class="w-full border border-gray-300 rounded-md p-2 text-sm focus:ring-blue-500 focus:border-blue-500">
+              <option value="compress">Compress Video (Reduce MB)</option>
+              <option value="mp3">Convert Video to Audio (MP3)</option>
+            </select>
+          </div>
+
+          <div id="targetMbContainer" class="transition-all">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Target File Size (MB)</label>
+            <input type="number" id="targetMB" value="50" min="1" class="w-full border border-gray-300 rounded-md p-2 text-sm focus:ring-blue-500 focus:border-blue-500">
+            <p class="text-xs text-gray-500 mt-1">Note: Extreme compression on long videos will reduce visual quality.</p>
+          </div>
+        </div>
+
+        <div class="flex gap-2 mt-5">
+          <button id="startBtn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-md disabled:opacity-50 transition-colors" disabled>Start Process</button>
+          <button id="downloadBtn" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-medium py-2.5 rounded-md disabled:opacity-50 hidden transition-colors">Download File</button>
+        </div>
+      </div>
+
+      <div class="flex flex-col h-full">
+        <div class="mb-3">
+          <div class="flex justify-between items-center mb-1">
+            <span class="text-sm font-medium text-gray-700">Progress</span>
+            <span id="progressText" class="text-xs font-mono text-gray-500">0%</span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-2.5">
+            <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <div class="flex-1 border rounded-lg bg-gray-900 overflow-hidden flex flex-col mt-2">
+          <div class="bg-gray-800 px-3 py-1.5 border-b border-gray-700 flex justify-between items-center">
+            <span class="text-xs text-gray-300 font-mono">Terminal Log</span>
+            <button id="clearLog" class="text-xs text-gray-400 hover:text-white transition-colors">Clear</button>
+          </div>
+          <div id="log" class="terminal flex-1"></div>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <script>
+    // 1. Immediately Setup UI Elements
+    const $ = s => document.querySelector(s);
+    const logEl = $('#log');
+    const startBtn = $('#startBtn');
+    const downloadBtn = $('#downloadBtn');
+    const fileInput = $('#fileInput');
+    const dropzone = $('#dropzone');
+    const fileNameEl = $('#fileName');
+    const modeSelect = $('#modeSelect');
+    const targetMbContainer = $('#targetMbContainer');
+    const targetMBInput = $('#targetMB');
+    const progressBar = $('#progressBar');
+    const progressText = $('#progressText');
+
+    let selectedFile = null;
+    let outputUrl = null;
+    let videoDuration = 0;
+    let ffmpeg = null;
+
+    function log(msg, cls = 'log-info') {
+      const time = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.className = cls;
+      div.textContent = `[${time}] ${msg}`;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    $('#clearLog').addEventListener('click', () => logEl.innerHTML = '');
+
+    // UI Toggles
+    modeSelect.addEventListener('change', (e) => {
+      if (e.target.value === 'compress') {
+        targetMbContainer.classList.remove('hidden');
+      } else {
+        targetMbContainer.classList.add('hidden');
+      }
+    });
+
+    // 2. Make the Dropzone Clickable Immediately
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('border-blue-500', 'bg-blue-50'); });
+    dropzone.addEventListener('dragleave', e => { dropzone.classList.remove('border-blue-500', 'bg-blue-50'); });
+    dropzone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropzone.classList.remove('border-blue-500', 'bg-blue-50');
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', e => {
+      if (e.target.files && e.target.files.length) handleFile(e.target.files[0]);
+    });
+
+    function handleFile(file) {
+      if (!file.type.startsWith('video/')) {
+        log('Please select a valid video file.', 'log-error');
+        return;
+      }
+      selectedFile = file;
+      fileNameEl.textContent = `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+      fileNameEl.classList.remove('hidden');
+      startBtn.disabled = false;
+      downloadBtn.classList.add('hidden');
+      log(`Selected: ${file.name}`, 'log-info');
+
+      // Extract duration quickly for the compression math
+      const videoElement = document.createElement('video');
+      videoElement.preload = 'metadata';
+      videoElement.onloadedmetadata = () => {
+        videoDuration = videoElement.duration;
+        window.URL.revokeObjectURL(videoElement.src);
+      };
+      videoElement.src = window.URL.createObjectURL(file);
+    }
+
+    // 3. Load FFmpeg securely (Single-Threaded for GitHub Pages)
+    async function loadFFmpeg() {
+      if (ffmpeg) return;
+      
+      if (!window.FFmpeg) {
+        throw new Error("FFmpeg failed to load. Please check your internet connection or adblocker.");
+      }
+
+      const { FFmpeg } = window.FFmpeg;
+      log('Loading FFmpeg engine. This takes a few seconds on the first run...', 'log-info');
+      ffmpeg = new FFmpeg();
+      
+      ffmpeg.on('log', ({ message }) => {
+        if (message.includes('bitrate') || message.includes('frame=') || message.includes('size=')) {
+           log(message, 'text-gray-400 text-[11px]');
+        }
+      });
+
+      ffmpeg.on('progress', ({ progress }) => {
+        const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+        progressBar.style.width = `${pct}%`;
+        progressText.textContent = `${pct}%`;
+      });
+
+      // Explicitly loading the single-threaded core which works perfectly on GitHub Pages
+      await ffmpeg.load({
+        coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+        wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
+      });
+      log('FFmpeg engine loaded successfully!', 'log-success');
+    }
+
+    // 4. Main Process Execution
+    startBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+      
+      startBtn.disabled = true;
+      downloadBtn.classList.add('hidden');
+      progressBar.style.width = '0%';
+      progressText.textContent = '0%';
+      if (outputUrl) window.URL.revokeObjectURL(outputUrl);
+
+      try {
+        await loadFFmpeg(); 
+        
+        const { fetchFile } = window.FFmpegUtil;
+        const mode = modeSelect.value;
+        const inputName = 'input_video' + selectedFile.name.substring(selectedFile.name.lastIndexOf('.'));
+        const outputName = mode === 'mp3' ? 'output.mp3' : 'output.mp4';
+        
+        log('Writing file to browser memory...', 'log-info');
+        await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
+
+        let ffmpegArgs = [];
+
+        if (mode === 'mp3') {
+          log('Starting extraction to MP3...', 'log-info');
+          ffmpegArgs = ['-i', inputName, '-vn', '-b:a', '192k', outputName];
+        } else {
+          log('Analyzing video for compression...', 'log-info');
+          if (!videoDuration) {
+            log('Could not determine duration. Using standard compression...', 'log-error');
+            ffmpegArgs = ['-i', inputName, '-vcodec', 'libx264', '-crf', '28', outputName];
+          } else {
+            const targetMB = parseFloat(targetMBInput.value);
+            // Math to determine exactly how hard to compress the file
+            let targetVideoBitrate = Math.floor(((targetMB * 8192) / videoDuration) - 128);
+            
+            if (targetVideoBitrate < 50) {
+                log('Warning: Target size is very small for this length. Quality will drop.', 'log-error');
+                targetVideoBitrate = 50; 
+            }
+
+            log(`Target bitrate set to: ${targetVideoBitrate} kbps to reach ~${targetMB}MB`, 'log-info');
+            
+            ffmpegArgs = [
+              '-i', inputName,
+              '-b:v', `${targetVideoBitrate}k`,
+              '-bufsize', `${targetVideoBitrate * 2}k`,
+              '-b:a', '128k',
+              outputName
+            ];
+          }
+        }
+
+        await ffmpeg.exec(ffmpegArgs);
+        log('Processing complete! Preparing download...', 'log-success');
+
+        const fileData = await ffmpeg.readFile(outputName);
+        const blob = new Blob([fileData.buffer], { type: mode === 'mp3' ? 'audio/mpeg' : 'video/mp4' });
+        outputUrl = URL.createObjectURL(blob);
+
+        downloadBtn.onclick = () => {
+          const a = document.createElement('a');
+          a.href = outputUrl;
+          a.download = `compressed_${selectedFile.name.substring(0, selectedFile.name.lastIndexOf('.'))}.${mode === 'mp3' ? 'mp3' : 'mp4'}`;
+          a.click();
+        };
+
+        progressBar.style.width = '100%';
+        progressText.textContent = '100%';
+        downloadBtn.classList.remove('hidden');
+        
+        // Clean up internal memory so the browser doesn't crash on the next file
+        await ffmpeg.deleteFile(inputName);
+        await ffmpeg.deleteFile(outputName);
+
+      } catch (err) {
+        log(`Error: ${err.message}`, 'log-error');
+        progressBar.style.backgroundColor = '#ff7675';
+      } finally {
+        startBtn.disabled = false;
+        startBtn.textContent = 'Process Another File';
+      }
+    });
+  </script>
+</body>
+</html>
