@@ -1,57 +1,218 @@
-async function loadFFmpeg() {
-  // if already created and loaded, nothing to do
-  if (ffmpeg && ffmpeg.loaded) return;
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Media Converter & Compressor (local)</title>
+  <style>
+    body { font-family: system-ui, Segoe UI, Helvetica, Arial; background: #f3f4f6; margin: 24px; }
+    .card { max-width: 920px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+    .drop { border: 2px dashed #cbd5e1; padding: 30px; text-align: center; border-radius: 8px; cursor: pointer; background: #fbfdff; }
+    .terminal { background: #071020; color: #cbd5e1; padding: 12px; border-radius: 8px; max-height: 240px; overflow: auto; font-family: monospace; }
+    .btn { padding: 10px 18px; border-radius: 8px; border: none; background: #2563eb; color: white; cursor: pointer; }
+    .hidden { display: none; }
+    .progressWrap { height: 10px; background: #e6eefc; border-radius: 6px; overflow: hidden; }
+    .progress { height: 100%; width: 0; background: #2563eb; transition: width .2s; }
+    .log-info { color: #7dd3fc; }
+    .log-error { color: #ff7675; }
+    .log-success { color: #86efac; }
+  </style>
 
-  // ensure runtime globals exist
-  if (!window.FFmpegWASM) {
-    throw new Error("FFmpeg failed to load. Please make sure ffmpeg.js and util.js are uploaded to your GitHub repository.");
+  <script src="coi-serviceworker.js"></script>
+
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+  <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+</head>
+<body>
+  <div class="card">
+    <h2>Media Converter & Compressor — Local FFmpeg</h2>
+    <div style="display:flex; gap:18px; margin-top:18px;">
+      <div style="flex:1">
+        <label class="block">Drop a Video File (.mp4, .mov, .webm)</label>
+        <div id="dropzone" class="drop">
+          <input id="fileInput" type="file" accept="video/*" class="hidden">
+          <div>Click to browse or drag file here</div>
+          <div id="fileName" class="hidden" style="margin-top:8px; color:#2563eb; font-weight:600;"></div>
+        </div>
+
+        <div style="margin-top:12px">
+          <label>Operation</label>
+          <select id="modeSelect" style="width:100%; padding:8px; margin-top:6px;">
+            <option value="compress">Compress Video (Reduce MB)</option>
+            <option value="mp3">Convert Video to Audio (MP3)</option>
+          </select>
+        </div>
+
+        <div id="targetMbContainer" style="margin-top:10px">
+          <label>Target File Size (MB)</label>
+          <input id="targetMB" type="number" value="50" style="width:100%; padding:8px; margin-top:6px;">
+        </div>
+
+        <div style="margin-top:14px">
+          <button id="startBtn" class="btn" disabled>Start Process</button>
+          <button id="downloadBtn" class="btn" style="background:#10b981; margin-left:10px;" hidden>Download File</button>
+        </div>
+      </div>
+
+      <div style="width:360px">
+        <label>Progress</label>
+        <div class="progressWrap" style="margin-top:6px">
+          <div id="progressBar" class="progress"></div>
+        </div>
+        <div id="progressText" style="text-align:right; font-size:13px; margin-top:6px;">0%</div>
+
+        <div style="margin-top:10px">
+          <label>Terminal Log</label>
+          <div id="log" class="terminal"></div>
+          <button id="clearLog" style="margin-top:8px; padding:6px 10px; border-radius:6px; background:#111827; color:#fff; border:none;">Clear</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  // Helper + UI refs
+  const $ = s => document.querySelector(s);
+  const logEl = $('#log'), startBtn = $('#startBtn'), downloadBtn = $('#downloadBtn'),
+        fileInput = $('#fileInput'), dropzone = $('#dropzone'), fileNameEl = $('#fileName'),
+        modeSelect = $('#modeSelect'), targetMBInput = $('#targetMB'),
+        progressBar = $('#progressBar'), progressText = $('#progressText');
+
+  let selectedFile = null, ffmpeg = null, outputUrl = null, videoDuration = 0;
+
+  function log(msg, cls='log-info') {
+    const time = new Date().toLocaleTimeString();
+    const d = document.createElement('div');
+    d.className = cls;
+    d.textContent = `[${time}] ${msg}`;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
   }
 
-  const { FFmpeg } = window.FFmpegWASM;
-  log('Loading FFmpeg engine (core files)...', 'log-info');
+  $('#clearLog').addEventListener('click', ()=> logEl.innerHTML = '');
+  dropzone.addEventListener('click', ()=> fileInput.click());
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.style.borderColor='#2563eb'; });
+  dropzone.addEventListener('dragleave', e => { dropzone.style.borderColor=''; });
+  dropzone.addEventListener('drop', e => { e.preventDefault(); if(e.dataTransfer.files?.length) handleFile(e.dataTransfer.files[0]); });
+  fileInput.addEventListener('change', e => { if(e.target.files?.length) handleFile(e.target.files[0]); });
 
-  // try load from local files first (repo), fallback to CDN if needed
-  const tries = [
-    { coreURL: './ffmpeg-core.js', wasmURL: './ffmpeg-core.wasm', label: 'local' },
-    { coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js', wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm', label: 'unpkg' },
-    { coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js', wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm', label: 'jsdelivr' }
-  ];
+  function handleFile(file){
+    if(!file.type.startsWith('video/')){ log('Please select a valid video file.', 'log-error'); return; }
+    selectedFile = file;
+    fileNameEl.textContent = `${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`;
+    fileNameEl.classList.remove('hidden');
+    startBtn.disabled = false;
+    downloadBtn.hidden = true;
+    log(`Selected: ${file.name}`);
+    
+    // get duration for bitrate calc
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => { videoDuration = v.duration; URL.revokeObjectURL(v.src); };
+    v.src = URL.createObjectURL(file);
+  }
 
-  let lastErr = null;
-  for (const t of tries) {
-    try {
-      log(`Attempting to load core from: ${t.label}`, 'text-gray-500');
-      
-      // Create a FRESH instance for every attempt
-      ffmpeg = new FFmpeg();
+  // Simplified and stabilized loadFFmpeg function
+  async function loadFFmpeg() {
+    if (ffmpeg && ffmpeg.loaded) return;
 
-      // Attach event handlers to the new instance
-      ffmpeg.on('log', (m) => {
-        const message = (m && m.message) ? m.message : (typeof m === 'string' ? m : JSON.stringify(m));
-        if (message.includes('bitrate') || message.includes('frame=') || message.includes('size=')) {
-           log(message, 'text-gray-400 text-[11px]');
-        }
-      });
-
-      ffmpeg.on('progress', (p) => {
-        const prog = (p && (p.progress ?? p)) || 0;
-        const pct = Math.max(0, Math.min(100, Math.round(prog * 100)));
-        progressBar.style.width = `${pct}%`;
-        progressText.textContent = `${pct}%`;
-      });
-
-      // Attempt to load
-      await ffmpeg.load({ coreURL: t.coreURL, wasmURL: t.wasmURL });
-      log(`FFmpeg engine loaded successfully from ${t.label}!`, 'log-success');
-      return; // Exit the loop on success
-      
-    } catch (err) {
-      lastErr = err;
-      log(`Failed to load core from ${t.label}: ${err.message}`, 'log-error');
-      // The loop will automatically continue to the next attempt
+    if (!window.FFmpegWASM) {
+      log('FFmpeg wrapper not found. Check your CDN script tags.', 'log-error');
+      throw new Error('FFmpeg UMD not found on window');
     }
+
+    const { FFmpeg } = window.FFmpegWASM;
+    log('Creating FFmpeg instance...', 'log-info');
+    ffmpeg = new FFmpeg();
+
+    ffmpeg.on('log', ({ message }) => {
+        if (message.includes('bitrate') || message.includes('frame=') || message.includes('size=')) {
+            log(message, 'text-gray-400 text-[11px]');
+        }
+    });
+    
+    ffmpeg.on('progress', ({ progress }) => {
+        const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+        progressBar.style.width = pct + '%';
+        progressText.textContent = pct + '%';
+    });
+
+    log('Attempting to load core from CDN...', 'log-info');
+    
+    await ffmpeg.load({
+        coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+        wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
+    });
+
+    log('FFmpeg engine loaded successfully!', 'log-success');
   }
 
-  // If the loop finishes and nothing worked:
-  throw new Error(`FFmpeg failed to load from all locations. Last error: ${lastErr?.message || 'unknown'}`);
-}
+  startBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    startBtn.disabled = true;
+    progressBar.style.width = '0%';
+    progressText.textContent = '0%';
+    if (outputUrl) { URL.revokeObjectURL(outputUrl); outputUrl = null; }
+    
+    try {
+      await loadFFmpeg();
+      
+      if (!window.FFmpegUtil || typeof window.FFmpegUtil.fetchFile !== 'function') {
+        throw new Error('FFmpegUtil.fetchFile not available.');
+      }
+      
+      const { fetchFile } = window.FFmpegUtil;
+      const mode = modeSelect.value;
+      const ext = (selectedFile.name && selectedFile.name.lastIndexOf('.') > -1) ? selectedFile.name.slice(selectedFile.name.lastIndexOf('.')) : '.mp4';
+      const inputName = 'input' + ext;
+      const outputName = mode === 'mp3' ? 'output.mp3' : 'output.mp4';
+
+      log('Writing file into virtual FS...', 'log-info');
+      await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
+
+      let args = [];
+      if (mode === 'mp3') {
+        args = ['-i', inputName, '-vn', '-b:a', '192k', outputName];
+      } else {
+        if (!videoDuration || isNaN(videoDuration) || videoDuration <= 0) {
+          log('Unknown duration — using CRF 28 fallback', 'log-info');
+          args = ['-i', inputName, '-vcodec', 'libx264', '-crf', '28', outputName];
+        } else {
+          const targetMB = Math.max(1, parseFloat(targetMBInput.value) || 50);
+          let targetVideoBitrate = Math.floor(((targetMB * 8192) / videoDuration) - 128);
+          if (targetVideoBitrate < 50) { log('Clamping low bitrate to 50 kbps', 'log-error'); targetVideoBitrate = 50; }
+          log(`Target video bitrate: ${targetVideoBitrate} kbps`, 'log-info');
+          args = ['-i', inputName, '-b:v', `${targetVideoBitrate}k`, '-bufsize', `${targetVideoBitrate*2}k`, '-b:a', '128k', outputName];
+        }
+      }
+
+      log('Starting ffmpeg with args: ' + args.join(' '), 'log-info');
+      await ffmpeg.exec(args);
+
+      log('Process finished — reading output', 'log-success');
+      const fileData = await ffmpeg.readFile(outputName);
+      const blob = new Blob([fileData.buffer], { type: mode === 'mp3' ? 'audio/mpeg' : 'video/mp4' });
+      outputUrl = URL.createObjectURL(blob);
+      downloadBtn.hidden = false;
+      downloadBtn.onclick = () => {
+        const a = document.createElement('a');
+        a.href = outputUrl;
+        a.download = `compressed_${selectedFile.name.replace(/\.[^/.]+$/,'')}.${mode === 'mp3' ? 'mp3' : 'mp4'}`;
+        a.click();
+      };
+      progressBar.style.width = '100%'; progressText.textContent = '100%';
+
+      // cleanup
+      try { await ffmpeg.deleteFile(inputName); } catch(e){}
+      try { await ffmpeg.deleteFile(outputName); } catch(e){}
+
+    } catch (err) {
+      log('Error: ' + (err?.message || err), 'log-error');
+      console.error(err);
+    } finally {
+      startBtn.disabled = false;
+    }
+  });
+  </script>
+</body>
+</html>
