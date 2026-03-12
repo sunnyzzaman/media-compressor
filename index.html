@@ -116,14 +116,12 @@
   async function loadFFmpeg() {
     if (ffmpeg && ffmpeg.loaded) return;
 
-    if (!window.FFmpegWASM || !window.FFmpegUtil) {
-      log('FFmpeg wrappers not found. Check your CDN script tags.', 'log-error');
+    if (!window.FFmpegWASM) {
+      log('FFmpeg wrapper not found. Check your CDN script tags.', 'log-error');
       throw new Error('FFmpeg UMD not found on window');
     }
 
     const { FFmpeg } = window.FFmpegWASM;
-    const { toBlobURL } = window.FFmpegUtil; // Extract the Blob utility
-    
     log('Creating FFmpeg instance...', 'log-info');
     ffmpeg = new FFmpeg();
 
@@ -139,16 +137,13 @@
         progressText.textContent = pct + '%';
     });
 
-    log('Fetching core files into local blobs to bypass CORS...', 'log-info');
+    log('Loading core files directly from local GitHub repository...', 'log-info');
     
-    const coreBaseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd';
-    const ffmpegBaseURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
-
-    // Convert external CDN links to local Blob URLs so the Web Worker doesn't panic
+    // Load files natively from your own domain
     await ffmpeg.load({
-        coreURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-        classWorkerURL: await toBlobURL(`${ffmpegBaseURL}/814.ffmpeg.js`, 'text/javascript')
+        coreURL: './ffmpeg-core.js',
+        wasmURL: './ffmpeg-core.wasm',
+        classWorkerURL: './814.ffmpeg.js'
     });
 
     log('FFmpeg engine loaded successfully!', 'log-success');
@@ -223,5 +218,6 @@
   </script>
 </body>
 </html>
+
 
 
