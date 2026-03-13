@@ -155,7 +155,7 @@
     xhr.open('POST', "https://sunnyzzaman-media-compressor-backend.hf.space/compress/", true);
     xhr.responseType = 'blob'; 
     
-    xhr.onload = () => {
+    xhr.onload = async () => {
       if (xhr.status === 200) {
         log('Compression complete! Preparing download...', 'log-success');
         progressBar.style.width = '100%';
@@ -169,11 +169,14 @@
         downloadBtn.onclick = () => {
           const a = document.createElement('a');
           a.href = outputUrl;
-          a.download = `compressed_${selectedFile.name}`;
+          a.download = `compressed_${selectedFile.name.replace(/[^a-zA-Z0-9 .-_]/g, '')}`;
           a.click();
         };
       } else {
-        log(`Server Error during compression (Status ${xhr.status}).`, 'log-error');
+        // THE FIX: If the server crashes, read the exact error message and print it to the log!
+        const errorBlob = xhr.response;
+        const errorText = await errorBlob.text();
+        log(`Server Crash (${xhr.status}): ${errorText}`, 'log-error');
         etaText.textContent = 'Failed.';
       }
       startBtn.disabled = false;
@@ -189,5 +192,6 @@
   </script>
 </body>
 </html>
+
 
 
