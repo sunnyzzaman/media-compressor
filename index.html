@@ -122,6 +122,8 @@
     }
 
     const { FFmpeg } = window.FFmpegWASM;
+    const { toBlobURL } = window.FFmpegUtil; 
+
     log('Creating FFmpeg instance...', 'log-info');
     ffmpeg = new FFmpeg();
 
@@ -137,14 +139,15 @@
         progressText.textContent = pct + '%';
     });
 
-    log('Loading core files directly from local GitHub repository...', 'log-info');
+    log('Fetching core files securely via CDN...', 'log-info');
     
-    
-    // Convert relative paths to absolute URLs using the current window location
+    const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+    const workerURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+
     await ffmpeg.load({
-        coreURL: new URL('./ffmpeg-core.js', window.location.href).href,
-        wasmURL: new URL('./ffmpeg-core.wasm', window.location.href).href,
-        classWorkerURL: new URL('./814.ffmpeg.js', window.location.href).href
+        coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
+        classWorkerURL: await toBlobURL(`${workerURL}/814.ffmpeg.js`, 'text/javascript')
     });
 
     log('FFmpeg engine loaded successfully!', 'log-success');
@@ -219,6 +222,7 @@
   </script>
 </body>
 </html>
+
 
 
 
