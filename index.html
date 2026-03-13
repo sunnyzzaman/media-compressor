@@ -90,7 +90,7 @@
     log(`Selected: ${file.name}`);
   }
 
-  startBtn.addEventListener('click', () => {
+  startBtn.addEventListener('click', async () => {
     if (!selectedFile) return;
     
     startBtn.disabled = true;
@@ -99,53 +99,63 @@
     
     progressBar.style.width = '0%';
     progressText.textContent = '0%';
-    etaText.textContent = 'Connecting...';
+    etaText.textContent = 'Slicing file into chunks...';
     
-    log('Initializing connection to the cloud kitchen...', 'log-info');
-    console.log('[DEBUG] Button clicked. Preparing FormData.');
-
-    const formData = new FormData();
-    formData.append('file', selectedFile);
-
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', API_URL, true);
-    xhr.responseType = 'blob'; 
-
-    // --- DETAILED DEBUGGERS ---
-
-    // 1. Connection Started
-    xhr.onloadstart = () => {
-      log('Connection opened. Starting upload...', 'log-info');
-      console.log('[DEBUG] xhr.onloadstart fired. Connection successful.');
-    };
-
-    // 2. Upload Progress tracking
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const percentComplete = Math.round((e.loaded / e.total) * 50);
+    // Generate a random ID for this specific compression job
+    const jobId = Math.random().toString(36).substring(2, 15);
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per slice
+    const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
+    
+    log(`Starting chunked upload. Splitting file into ${totalChunks} pieces...`, 'log-info');
+    
+    // --- Step 1: Upload chunks sequentially ---
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, selectedFile.size);
+      const chunk = selectedFile.slice(start, end);
+      
+      const formData = new FormData();
+      formData.append('file', chunk);
+      formData.append('job_id', jobId);
+      
+      try {
+        const response = await fetch("https://sunnyzzaman-media-compressor-backend.hf.space/upload_chunk/", {
+          method: 'POST',
+          body: formData
+        });
+        
+        if (!response.ok) throw new Error('Upload rejected by server');
+        
+        // Update progress bar (Upload takes up the first 50% of our bar)
+        const percentComplete = Math.round(((i + 1) / totalChunks) * 50);
         progressBar.style.width = percentComplete + '%';
         progressText.textContent = percentComplete + '%';
         
-        // Log to console every ~10% to avoid flooding the terminal
-        if (percentComplete % 10 === 0) {
-            console.log(`[DEBUG] Uploading: ${(e.loaded/1024/1024).toFixed(1)} MB of ${(e.total/1024/1024).toFixed(1)} MB`);
+        if ((i + 1) % 5 === 0 || i === totalChunks - 1) {
+          log(`Uploaded chunk ${i + 1} of ${totalChunks}`, 'text-gray-400 text-[11px]');
         }
+      } catch (err) {
+        log(`Failed to upload chunk ${i + 1}. Network error.`, 'log-error');
+        startBtn.disabled = false;
+        return; // Stop the process if a chunk fails
       }
-    };
-
-    // 3. Upload Finished
-    xhr.upload.onload = () => {
-      log('Upload 100% complete. Server is now compressing natively...', 'log-info');
-      console.log('[DEBUG] xhr.upload.onload fired. Waiting for server response.');
-      etaText.textContent = 'Processing... (This usually takes a few minutes)';
-      progressBar.style.width = '75%'; 
-      progressText.textContent = 'Cooking...';
-    };
-
-    // 4. Server Response Received
+    }
+    
+    // --- Step 2: Tell the server to compress the glued-together file ---
+    log('All chunks uploaded! Server is now running native FFmpeg...', 'log-info');
+    etaText.textContent = 'Processing... (This usually takes a few minutes)';
+    progressBar.style.width = '75%'; 
+    progressText.textContent = 'Cooking...';
+    
+    const compressData = new FormData();
+    compressData.append('job_id', jobId);
+    compressData.append('original_name', selectedFile.name);
+    
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', "https://sunnyzzaman-media-compressor-backend.hf.space/compress/", true);
+    xhr.responseType = 'blob'; 
+    
     xhr.onload = () => {
-      console.log(`[DEBUG] xhr.onload fired. HTTP Status Code: ${xhr.status}`);
-      
       if (xhr.status === 200) {
         log('Compression complete! Preparing download...', 'log-success');
         progressBar.style.width = '100%';
@@ -163,33 +173,21 @@
           a.click();
         };
       } else {
-        // If it's a 500 or 400 error from the server
-        log(`Server Error (Status ${xhr.status}). Check browser console (F12) for details.`, 'log-error');
+        log(`Server Error during compression (Status ${xhr.status}).`, 'log-error');
         etaText.textContent = 'Failed.';
       }
       startBtn.disabled = false;
     };
-
-    // 5. Network / CORS Failure
-    xhr.onerror = (e) => {
-      console.error('[DEBUG] xhr.onerror fired. Full error object:', e);
-      log('Network Error: The connection was blocked or dropped. This is usually a CORS error or the server is asleep. Press F12 to check the Console tab.', 'log-error');
-      etaText.textContent = 'Network Error.';
+    
+    xhr.onerror = () => {
+      log('Network Error while waiting for compression to finish.', 'log-error');
       startBtn.disabled = false;
     };
     
-    // 6. Request Aborted
-    xhr.onabort = () => {
-      log('Upload was aborted by the browser.', 'log-error');
-      console.log('[DEBUG] xhr.onabort fired.');
-      startBtn.disabled = false;
-    };
-
-    // Finally, send the payload
-    log('Sending payload...', 'log-info');
-    xhr.send(formData);
+    xhr.send(compressData);
   });
   </script>
 </body>
 </html>
+
 
