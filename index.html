@@ -219,33 +219,6 @@
       await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
 
       let args = [];
-      if (mode === 'mp3') {
-        // Explicitly naming the mp3 codec is safer
-        args = ['-i', inputName, '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', outputName];
-      } else {
-        if (!videoDuration || isNaN(videoDuration) || videoDuration <= 0) {
-          log('Unknown duration — using CRF 28 fallback', 'log-info');
-          // Added preset and pix_fmt to the fallback
-          args = ['-i', inputName, '-vcodec', 'libx264', '-crf', '28', '-preset', 'superfast', '-pix_fmt', 'yuv420p', outputName];
-        } else {
-          const targetMB = Math.max(1, parseFloat(targetMBInput.value) || 50);
-          let targetVideoBitrate = Math.floor(((targetMB * 8192) / videoDuration) - 128);
-          if (targetVideoBitrate < 50) { log('Clamping low bitrate to 50 kbps', 'log-error'); targetVideoBitrate = 50; }
-          log(`Target video bitrate: ${targetVideoBitrate} kbps`, 'log-info');
-          
-          args = [
-            '-i', inputName, 
-            '-vcodec', 'libx264',
-            '-b:v', `${targetVideoBitrate}k`, 
-            '-maxrate', `${targetVideoBitrate}k`, // Strictly enforce the bitrate
-            '-bufsize', `${targetVideoBitrate * 2}k`, 
-            '-preset', 'superfast',               // Drastically speed up browser encoding
-            '-pix_fmt', 'yuv420p',                // Ensure cross-browser playback
-            '-b:a', '128k', 
-            outputName
-          ];
-        }
-      }
 
       log('Starting ffmpeg with args: ' + args.join(' '), 'log-info');
       await ffmpeg.exec(args);
@@ -277,6 +250,7 @@
   </script>
 </body>
 </html>
+
 
 
 
