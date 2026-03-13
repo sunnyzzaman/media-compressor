@@ -139,11 +139,12 @@
 
     log('Loading core files directly from local GitHub repository...', 'log-info');
     
-    // Load files natively from your own domain
+    
+    // Convert relative paths to absolute URLs using the current window location
     await ffmpeg.load({
-        coreURL: './ffmpeg-core.js',
-        wasmURL: './ffmpeg-core.wasm',
-        classWorkerURL: './814.ffmpeg.js'
+        coreURL: new URL('./ffmpeg-core.js', window.location.href).href,
+        wasmURL: new URL('./ffmpeg-core.wasm', window.location.href).href,
+        classWorkerURL: new URL('./814.ffmpeg.js', window.location.href).href
     });
 
     log('FFmpeg engine loaded successfully!', 'log-success');
@@ -218,6 +219,7 @@
   </script>
 </body>
 </html>
+
 
 
 
