@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Media Converter & Compressor (SaaS Hybrid)</title>
+  <title>Media Converter & Compressor (Cloud Powered)</title>
   <style>
     body { font-family: system-ui, Segoe UI, Helvetica, Arial; background: #f3f4f6; margin: 24px; }
     .card { max-width: 920px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 6px 18px rgba(15,23,42,.06); }
@@ -29,6 +29,20 @@
           <input id="fileInput" type="file" accept="video/*" class="hidden">
           <div>Click to browse or drag file here</div>
           <div id="fileName" class="hidden" style="margin-top:8px; color:#2563eb; font-weight:600;"></div>
+        </div>
+
+        <div style="margin-top:12px">
+          <label>Target File Size (MB)</label>
+          <input id="targetMB" type="number" value="50" style="width:100%; padding:8px; margin-top:6px;">
+        </div>
+
+        <div style="margin-top:10px">
+          <label>Max Resolution</label>
+          <select id="resSelect" style="width:100%; padding:8px; margin-top:6px;">
+            <option value="720">720p (Better quality)</option>
+            <option value="480" selected>480p (Fastest)</option>
+            <option value="360">360p (Smallest)</option>
+          </select>
         </div>
 
         <div style="margin-top:14px">
@@ -58,10 +72,10 @@
   const $ = s => document.querySelector(s);
   const logEl = $('#log'), startBtn = $('#startBtn'), downloadBtn = $('#downloadBtn'),
         fileInput = $('#fileInput'), dropzone = $('#dropzone'), fileNameEl = $('#fileName'),
-        progressBar = $('#progressBar'), progressText = $('#progressText'), etaText = $('#etaText');
+        progressBar = $('#progressBar'), progressText = $('#progressText'), etaText = $('#etaText'),
+        targetMBInput = $('#targetMB'), resSelect = $('#resSelect');
 
-  // The hidden URL to your Hugging Face Space
-  const API_URL = "https://sunnyzzaman-media-compressor-backend.hf.space/compress/";
+  const BASE_URL = "https://sunnyzzaman-media-compressor-backend.hf.space";
   let selectedFile = null, outputUrl = null;
 
   function log(msg, cls='log-info') {
@@ -101,14 +115,12 @@
     progressText.textContent = '0%';
     etaText.textContent = 'Slicing file into chunks...';
     
-    // Generate a random ID for this specific compression job
     const jobId = Math.random().toString(36).substring(2, 15);
-    const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per slice
+    const CHUNK_SIZE = 5 * 1024 * 1024; 
     const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
     
-    log(`Starting chunked upload. Splitting file into ${totalChunks} pieces...`, 'log-info');
+    log(`Starting chunked upload (${totalChunks} pieces)...`, 'log-info');
     
-    // --- Step 1: Upload chunks sequentially ---
     for (let i = 0; i < totalChunks; i++) {
       const start = i * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, selectedFile.size);
@@ -119,68 +131,60 @@
       formData.append('job_id', jobId);
       
       try {
-        const response = await fetch("https://sunnyzzaman-media-compressor-backend.hf.space/upload_chunk/", {
+        const response = await fetch(`${BASE_URL}/upload_chunk/`, {
           method: 'POST',
           body: formData
         });
+        if (!response.ok) throw new Error('Upload rejected');
         
-        if (!response.ok) throw new Error('Upload rejected by server');
-        
-        // Update progress bar (Upload takes up the first 50% of our bar)
         const percentComplete = Math.round(((i + 1) / totalChunks) * 50);
         progressBar.style.width = percentComplete + '%';
         progressText.textContent = percentComplete + '%';
         
         if ((i + 1) % 5 === 0 || i === totalChunks - 1) {
-          log(`Uploaded chunk ${i + 1} of ${totalChunks}`, 'text-gray-400 text-[11px]');
+          log(`Uploaded chunk ${i + 1} of ${totalChunks}`);
         }
       } catch (err) {
-        log(`Failed to upload chunk ${i + 1}. Network error.`, 'log-error');
+        log(`Failed to upload chunk ${i + 1}.`, 'log-error');
         startBtn.disabled = false;
-        return; // Stop the process if a chunk fails
+        return;
       }
     }
     
-    // --- Step 2: Tell the server to compress the glued-together file ---
-    // --- Step 2: Tell the server to compress (Background Task) ---
-    log('All chunks uploaded! Instructing server to start background compression...', 'log-info');
-    etaText.textContent = 'Processing... (This usually takes a few minutes)';
+    log('All chunks uploaded! Starting background compression...', 'log-info');
+    etaText.textContent = 'Processing on server...';
     progressBar.style.width = '75%'; 
     progressText.textContent = 'Cooking...';
     
     const compressData = new FormData();
     compressData.append('job_id', jobId);
     compressData.append('original_name', selectedFile.name);
+    // Send your preferences to the backend
+    compressData.append('target_mb', targetMBInput.value);
+    compressData.append('resolution', resSelect.value);
     
     try {
-      // Start the job
-      const startRes = await fetch("https://sunnyzzaman-media-compressor-backend.hf.space/start_compress/", {
+      const startRes = await fetch(`${BASE_URL}/start_compress/`, {
         method: 'POST',
         body: compressData
       });
-      if (!startRes.ok) throw new Error('Failed to start compression job');
+      if (!startRes.ok) throw new Error('Failed to start job');
       
-      log('Compression job started successfully. Waiting for server to finish...', 'log-info');
-      
-      // --- Step 3: Poll the server every 5 seconds ---
       const pollInterval = setInterval(async () => {
         try {
-          const statusRes = await fetch(`https://sunnyzzaman-media-compressor-backend.hf.space/status/${jobId}`);
-          if (!statusRes.ok) throw new Error('Status check failed');
+          const statusRes = await fetch(`${BASE_URL}/status/${jobId}`);
           const statusData = await statusRes.json();
           
           if (statusData.status === "processing") {
-            // Still cooking...
             progressText.textContent = 'Still cooking...';
           } else if (statusData.status === "done") {
             clearInterval(pollInterval);
-            log('Compression complete! Preparing download...', 'log-success');
+            log('Compression complete!', 'log-success');
             progressBar.style.width = '100%';
             progressText.textContent = '100%';
             etaText.textContent = 'Done!';
             
-            // Set up the download button to point directly to the backend file route
-            const downloadUrl = `https://sunnyzzaman-media-compressor-backend.hf.space/download/${jobId}`;
+            const downloadUrl = `${BASE_URL}/download/${jobId}`;
             downloadBtn.hidden = false;
             downloadBtn.onclick = () => {
               const a = document.createElement('a');
@@ -188,38 +192,23 @@
               a.download = `compressed_${selectedFile.name.replace(/[^a-zA-Z0-9 .-_]/g, '')}`;
               a.click();
             };
-            
             startBtn.disabled = false;
-            // Auto-trigger the download
-            downloadBtn.click();
-            
+            downloadBtn.click(); // Auto-download
           } else if (statusData.status === "error") {
             clearInterval(pollInterval);
             log(`Server Error: ${statusData.message}`, 'log-error');
-            etaText.textContent = 'Failed.';
             startBtn.disabled = false;
           }
         } catch (pollErr) {
-          console.warn("Polling error (might be temporary):", pollErr);
+          console.warn("Polling...");
         }
-      }, 5000); // Wait 5 seconds between checks
+      }, 5000);
       
     } catch (err) {
-      log('Network Error while starting compression.', 'log-error');
+      log('Network Error while starting.', 'log-error');
       startBtn.disabled = false;
     }
-    
-    xhr.onerror = () => {
-      log('Network Error while waiting for compression to finish.', 'log-error');
-      startBtn.disabled = false;
-    };
-    
-    xhr.send(compressData);
   });
   </script>
 </body>
 </html>
-
-
-
-
