@@ -114,44 +114,68 @@
 
   // Simplified and stabilized loadFFmpeg function
   async function loadFFmpeg() {
-    if (ffmpeg && ffmpeg.loaded) return;
-
-    if (!window.FFmpegWASM) {
-      log('FFmpeg wrapper not found. Check your CDN script tags.', 'log-error');
-      throw new Error('FFmpeg UMD not found on window');
-    }
-
-    const { FFmpeg } = window.FFmpegWASM;
-    const { toBlobURL } = window.FFmpegUtil; 
-
-    log('Creating FFmpeg instance...', 'log-info');
-    ffmpeg = new FFmpeg();
-
-    ffmpeg.on('log', ({ message }) => {
-        if (message.includes('bitrate') || message.includes('frame=') || message.includes('size=')) {
-            log(message, 'text-gray-400 text-[11px]');
-        }
-    });
-    
-    ffmpeg.on('progress', ({ progress }) => {
-        const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
-        progressBar.style.width = pct + '%';
-        progressText.textContent = pct + '%';
-    });
-
-    log('Fetching core files securely via CDN...', 'log-info');
-    
-    const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-    const workerURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
-
-    await ffmpeg.load({
-        coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
-        classWorkerURL: await toBlobURL(`${workerURL}/814.ffmpeg.js`, 'text/javascript')
-    });
-
-    log('FFmpeg engine loaded successfully!', 'log-success');
+  if (ffmpeg && ffmpeg.loaded) {
+    log('FFmpeg is already loaded. Skipping initialization.', 'log-success');
+    return;
   }
+
+  if (!window.FFmpegWASM || !window.FFmpegUtil) {
+    log('FFmpeg UMD or util not found. Ensure you included ffmpeg.js and util.js (UMD) via CDN.', 'log-error');
+    throw new Error('FFmpeg or FFmpegUtil missing on window');
+  }
+
+  const { FFmpeg } = window.FFmpegWASM;
+  const { toBlobURL } = window.FFmpegUtil;
+
+  log('Creating FFmpeg instance...', 'log-info');
+  ffmpeg = new FFmpeg();
+
+  // Handle standard FFmpeg terminal output
+  ffmpeg.on('log', ({ message }) => {
+    if (message.includes('bitrate') || message.includes('frame=') || message.includes('size=')) {
+      log(message, 'text-gray-400 text-[11px]');
+    }
+  });
+
+  // Handle progress bar updates
+  ffmpeg.on('progress', ({ progress }) => {
+    const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+    progressBar.style.width = pct + '%';
+    progressText.textContent = pct + '%';
+  });
+
+  log('Fetching core files securely via CDN (ESM builds)...', 'log-info');
+
+  const coreBase = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm';
+  const workerBase = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm';
+
+  try {
+    // Step-by-step downloading and blob conversion logs
+    log(`Step 1/3: Downloading ffmpeg-core.js and converting to Blob URL...`, 'log-info');
+    const coreURL = await toBlobURL(`${coreBase}/ffmpeg-core.js`, 'text/javascript');
+    
+    log(`Step 2/3: Downloading ffmpeg-core.wasm and converting to Blob URL...`, 'log-info');
+    const wasmURL = await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, 'application/wasm');
+    
+    log(`Step 3/3: Downloading worker.js and converting to Blob URL...`, 'log-info');
+    const classWorkerURL = await toBlobURL(`${workerBase}/worker.js`, 'text/javascript');
+
+    log('All files downloaded. Booting up WebAssembly engine in a background worker...', 'log-info');
+    
+    // Injecting the local Blobs into the engine
+    await ffmpeg.load({
+      coreURL,
+      wasmURL,
+      classWorkerURL
+    });
+
+    log('FFmpeg engine loaded successfully! Ready to process.', 'log-success');
+  } catch (err) {
+    log(`Fatal Error during FFmpeg load: ${err.message}`, 'log-error');
+    console.error('Detailed Load Error:', err);
+    throw err; // Re-throw so the startBtn catch block can reset the UI
+  }
+}
 
   startBtn.addEventListener('click', async () => {
     if (!selectedFile) return;
@@ -235,6 +259,7 @@
   </script>
 </body>
 </html>
+
 
 
 
