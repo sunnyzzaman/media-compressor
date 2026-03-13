@@ -142,7 +142,8 @@
     }
     
     // --- Step 2: Tell the server to compress the glued-together file ---
-    log('All chunks uploaded! Server is now running native FFmpeg...', 'log-info');
+    // --- Step 2: Tell the server to compress (Background Task) ---
+    log('All chunks uploaded! Instructing server to start background compression...', 'log-info');
     etaText.textContent = 'Processing... (This usually takes a few minutes)';
     progressBar.style.width = '75%'; 
     progressText.textContent = 'Cooking...';
@@ -151,36 +152,62 @@
     compressData.append('job_id', jobId);
     compressData.append('original_name', selectedFile.name);
     
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', "https://sunnyzzaman-media-compressor-backend.hf.space/compress/", true);
-    xhr.responseType = 'blob'; 
-    
-    xhr.onload = async () => {
-      if (xhr.status === 200) {
-        log('Compression complete! Preparing download...', 'log-success');
-        progressBar.style.width = '100%';
-        progressText.textContent = '100%';
-        etaText.textContent = 'Done!';
-
-        const blob = xhr.response;
-        outputUrl = URL.createObjectURL(blob);
-        
-        downloadBtn.hidden = false;
-        downloadBtn.onclick = () => {
-          const a = document.createElement('a');
-          a.href = outputUrl;
-          a.download = `compressed_${selectedFile.name.replace(/[^a-zA-Z0-9 .-_]/g, '')}`;
-          a.click();
-        };
-      } else {
-        // THE FIX: If the server crashes, read the exact error message and print it to the log!
-        const errorBlob = xhr.response;
-        const errorText = await errorBlob.text();
-        log(`Server Crash (${xhr.status}): ${errorText}`, 'log-error');
-        etaText.textContent = 'Failed.';
-      }
+    try {
+      // Start the job
+      const startRes = await fetch("https://sunnyzzaman-media-compressor-backend.hf.space/start_compress/", {
+        method: 'POST',
+        body: compressData
+      });
+      if (!startRes.ok) throw new Error('Failed to start compression job');
+      
+      log('Compression job started successfully. Waiting for server to finish...', 'log-info');
+      
+      // --- Step 3: Poll the server every 5 seconds ---
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`https://sunnyzzaman-media-compressor-backend.hf.space/status/${jobId}`);
+          if (!statusRes.ok) throw new Error('Status check failed');
+          const statusData = await statusRes.json();
+          
+          if (statusData.status === "processing") {
+            // Still cooking...
+            progressText.textContent = 'Still cooking...';
+          } else if (statusData.status === "done") {
+            clearInterval(pollInterval);
+            log('Compression complete! Preparing download...', 'log-success');
+            progressBar.style.width = '100%';
+            progressText.textContent = '100%';
+            etaText.textContent = 'Done!';
+            
+            // Set up the download button to point directly to the backend file route
+            const downloadUrl = `https://sunnyzzaman-media-compressor-backend.hf.space/download/${jobId}`;
+            downloadBtn.hidden = false;
+            downloadBtn.onclick = () => {
+              const a = document.createElement('a');
+              a.href = downloadUrl;
+              a.download = `compressed_${selectedFile.name.replace(/[^a-zA-Z0-9 .-_]/g, '')}`;
+              a.click();
+            };
+            
+            startBtn.disabled = false;
+            // Auto-trigger the download
+            downloadBtn.click();
+            
+          } else if (statusData.status === "error") {
+            clearInterval(pollInterval);
+            log(`Server Error: ${statusData.message}`, 'log-error');
+            etaText.textContent = 'Failed.';
+            startBtn.disabled = false;
+          }
+        } catch (pollErr) {
+          console.warn("Polling error (might be temporary):", pollErr);
+        }
+      }, 5000); // Wait 5 seconds between checks
+      
+    } catch (err) {
+      log('Network Error while starting compression.', 'log-error');
       startBtn.disabled = false;
-    };
+    }
     
     xhr.onerror = () => {
       log('Network Error while waiting for compression to finish.', 'log-error');
@@ -192,6 +219,7 @@
   </script>
 </body>
 </html>
+
 
 
 
