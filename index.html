@@ -219,6 +219,40 @@
       await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
 
       let args = [];
+      if (mode === 'mp3') {
+        args = ['-i', inputName, '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', outputName];
+      } else {
+        if (!videoDuration || isNaN(videoDuration) || videoDuration <= 0) {
+          log('Unknown duration — using CRF 28 fallback', 'log-info');
+          args = [
+            '-i', inputName, 
+            '-vcodec', 'libx264', 
+            '-vf', 'scale=-2:720',   // Downscales to 720p for massive speed boost
+            '-crf', '28', 
+            '-preset', 'ultrafast',  // Forces max encoding speed
+            '-pix_fmt', 'yuv420p', 
+            outputName
+          ];
+        } else {
+          const targetMB = Math.max(1, parseFloat(targetMBInput.value) || 50);
+          let targetVideoBitrate = Math.floor(((targetMB * 8192) / videoDuration) - 128);
+          if (targetVideoBitrate < 50) { log('Clamping low bitrate to 50 kbps', 'log-error'); targetVideoBitrate = 50; }
+          log(`Target video bitrate: ${targetVideoBitrate} kbps`, 'log-info');
+          
+          args = [
+            '-i', inputName, 
+            '-vcodec', 'libx264',
+            '-vf', 'scale=-2:720',                // Downscales to 720p
+            '-b:v', `${targetVideoBitrate}k`, 
+            '-maxrate', `${targetVideoBitrate}k`, 
+            '-bufsize', `${targetVideoBitrate * 2}k`, 
+            '-preset', 'ultrafast',               // Max encoding speed
+            '-pix_fmt', 'yuv420p',                
+            '-b:a', '128k', 
+            outputName
+          ];
+        }
+      }
 
       log('Starting ffmpeg with args: ' + args.join(' '), 'log-info');
       await ffmpeg.exec(args);
@@ -250,6 +284,7 @@
   </script>
 </body>
 </html>
+
 
 
 
