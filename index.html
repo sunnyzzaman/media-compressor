@@ -99,43 +99,59 @@
     
     progressBar.style.width = '0%';
     progressText.textContent = '0%';
-    etaText.textContent = 'Uploading to server...';
-    log('Sending file to the cloud kitchen...', 'log-info');
+    etaText.textContent = 'Connecting...';
+    
+    log('Initializing connection to the cloud kitchen...', 'log-info');
+    console.log('[DEBUG] Button clicked. Preparing FormData.');
 
     const formData = new FormData();
     formData.append('file', selectedFile);
 
-    // We use XMLHttpRequest here instead of fetch() so we can track the upload progress
     const xhr = new XMLHttpRequest();
     xhr.open('POST', API_URL, true);
-    xhr.responseType = 'blob'; // We expect a video file back
+    xhr.responseType = 'blob'; 
 
-    // Track the upload phase
+    // --- DETAILED DEBUGGERS ---
+
+    // 1. Connection Started
+    xhr.onloadstart = () => {
+      log('Connection opened. Starting upload...', 'log-info');
+      console.log('[DEBUG] xhr.onloadstart fired. Connection successful.');
+    };
+
+    // 2. Upload Progress tracking
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
-        // Upload is roughly the first 50% of the total time
         const percentComplete = Math.round((e.loaded / e.total) * 50);
         progressBar.style.width = percentComplete + '%';
         progressText.textContent = percentComplete + '%';
+        
+        // Log to console every ~10% to avoid flooding the terminal
+        if (percentComplete % 10 === 0) {
+            console.log(`[DEBUG] Uploading: ${(e.loaded/1024/1024).toFixed(1)} MB of ${(e.total/1024/1024).toFixed(1)} MB`);
+        }
       }
     };
 
+    // 3. Upload Finished
     xhr.upload.onload = () => {
-      log('Upload complete. Server is now compressing the video natively...', 'log-info');
+      log('Upload 100% complete. Server is now compressing natively...', 'log-info');
+      console.log('[DEBUG] xhr.upload.onload fired. Waiting for server response.');
       etaText.textContent = 'Processing... (This usually takes a few minutes)';
-      progressBar.style.width = '75%'; // Fake progress while we wait for the server
+      progressBar.style.width = '75%'; 
       progressText.textContent = 'Cooking...';
     };
 
-    // When the server finishes cooking and sends the file back
+    // 4. Server Response Received
     xhr.onload = () => {
+      console.log(`[DEBUG] xhr.onload fired. HTTP Status Code: ${xhr.status}`);
+      
       if (xhr.status === 200) {
         log('Compression complete! Preparing download...', 'log-success');
         progressBar.style.width = '100%';
         progressText.textContent = '100%';
         etaText.textContent = 'Done!';
 
-        // Create a local link for the downloaded file
         const blob = xhr.response;
         outputUrl = URL.createObjectURL(blob);
         
@@ -147,19 +163,33 @@
           a.click();
         };
       } else {
-        log(`Server error: Status ${xhr.status}. The file may be too large.`, 'log-error');
+        // If it's a 500 or 400 error from the server
+        log(`Server Error (Status ${xhr.status}). Check browser console (F12) for details.`, 'log-error');
         etaText.textContent = 'Failed.';
       }
       startBtn.disabled = false;
     };
 
-    xhr.onerror = () => {
-      log('Network error occurred. The server might be asleep, try again in 1 minute.', 'log-error');
+    // 5. Network / CORS Failure
+    xhr.onerror = (e) => {
+      console.error('[DEBUG] xhr.onerror fired. Full error object:', e);
+      log('Network Error: The connection was blocked or dropped. This is usually a CORS error or the server is asleep. Press F12 to check the Console tab.', 'log-error');
+      etaText.textContent = 'Network Error.';
+      startBtn.disabled = false;
+    };
+    
+    // 6. Request Aborted
+    xhr.onabort = () => {
+      log('Upload was aborted by the browser.', 'log-error');
+      console.log('[DEBUG] xhr.onabort fired.');
       startBtn.disabled = false;
     };
 
+    // Finally, send the payload
+    log('Sending payload...', 'log-info');
     xhr.send(formData);
   });
   </script>
 </body>
 </html>
+
