@@ -43,6 +43,16 @@
           </select>
         </div>
 
+        <div style="margin-top:10px">
+          <label>Max Resolution</label>
+          <select id="resSelect" style="width:100%; padding:8px; margin-top:6px;">
+            <option value="720">720p (Good quality, moderate speed)</option>
+            <option value="480" selected>480p (Okay quality, fast)</option>
+            <option value="360">360p (Low quality, very fast)</option>
+            <option value="original">Original (Slowest, best quality)</option>
+          </select>
+        </div>
+
         <div id="targetMbContainer" style="margin-top:10px">
           <label>Target File Size (MB)</label>
           <input id="targetMB" type="number" value="50" style="width:100%; padding:8px; margin-top:6px;">
@@ -60,6 +70,7 @@
           <div id="progressBar" class="progress"></div>
         </div>
         <div id="progressText" style="text-align:right; font-size:13px; margin-top:6px;">0%</div>
+        <div id="etaText" style="text-align:right; font-size:12px; color:#64748b; margin-top:2px;"></div>
 
         <div style="margin-top:10px">
           <label>Terminal Log</label>
@@ -76,9 +87,10 @@
   const logEl = $('#log'), startBtn = $('#startBtn'), downloadBtn = $('#downloadBtn'),
         fileInput = $('#fileInput'), dropzone = $('#dropzone'), fileNameEl = $('#fileName'),
         modeSelect = $('#modeSelect'), targetMBInput = $('#targetMB'),
-        progressBar = $('#progressBar'), progressText = $('#progressText');
+        progressBar = $('#progressBar'), progressText = $('#progressText'),
+        resSelect = $('#resSelect'), etaText = $('#etaText');
 
-  let selectedFile = null, ffmpeg = null, outputUrl = null, videoDuration = 0;
+  let selectedFile = null, ffmpeg = null, outputUrl = null, videoDuration = 0, startTime = 0;
 
   function log(msg, cls='log-info') {
     const time = new Date().toLocaleTimeString();
@@ -137,6 +149,19 @@
     const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
     progressBar.style.width = pct + '%';
     progressText.textContent = pct + '%';
+    
+    // ETA Math Update
+    if (progress > 0 && progress < 1 && startTime > 0) {
+      const elapsedSec = (Date.now() - startTime) / 1000;
+      const totalEstimatedSec = elapsedSec / progress;
+      const remainingSec = Math.max(0, totalEstimatedSec - elapsedSec);
+      
+      const m = Math.floor(remainingSec / 60);
+      const s = Math.floor(remainingSec % 60).toString().padStart(2, '0');
+      etaText.textContent = `ETA: ${m}m ${s}s`;
+    } else if (progress === 1) {
+      etaText.textContent = 'Finishing up...';
+    }
   });
 
   log('Fetching core files securely via CDN (UMD builds) and preparing worker...', 'log-info');
@@ -219,6 +244,9 @@
       await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
 
       let args = [];
+      const resVal = resSelect.value;
+      const scaleArgs = resVal === 'original' ? [] : ['-vf', `scale=-2:${resVal}`];
+
       if (mode === 'mp3') {
         args = ['-i', inputName, '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', outputName];
       } else {
@@ -227,9 +255,10 @@
           args = [
             '-i', inputName, 
             '-vcodec', 'libx264', 
-            '-vf', 'scale=-2:720',   // Downscales to 720p for massive speed boost
+            ...scaleArgs,            
             '-crf', '28', 
-            '-preset', 'ultrafast',  // Forces max encoding speed
+            '-preset', 'ultrafast',  
+            '-tune', 'fastdecode',   
             '-pix_fmt', 'yuv420p', 
             outputName
           ];
@@ -237,16 +266,16 @@
           const targetMB = Math.max(1, parseFloat(targetMBInput.value) || 50);
           let targetVideoBitrate = Math.floor(((targetMB * 8192) / videoDuration) - 128);
           if (targetVideoBitrate < 50) { log('Clamping low bitrate to 50 kbps', 'log-error'); targetVideoBitrate = 50; }
-          log(`Target video bitrate: ${targetVideoBitrate} kbps`, 'log-info');
           
           args = [
             '-i', inputName, 
             '-vcodec', 'libx264',
-            '-vf', 'scale=-2:720',                // Downscales to 720p
+            ...scaleArgs,             
             '-b:v', `${targetVideoBitrate}k`, 
             '-maxrate', `${targetVideoBitrate}k`, 
             '-bufsize', `${targetVideoBitrate * 2}k`, 
-            '-preset', 'ultrafast',               // Max encoding speed
+            '-preset', 'ultrafast',   
+            '-tune', 'fastdecode',    
             '-pix_fmt', 'yuv420p',                
             '-b:a', '128k', 
             outputName
@@ -254,9 +283,11 @@
         }
       }
 
+      startTime = Date.now(); // Start the ETA timer!
+      etaText.textContent = 'Calculating ETA...';
+
       log('Starting ffmpeg with args: ' + args.join(' '), 'log-info');
       await ffmpeg.exec(args);
-
       log('Process finished — reading output', 'log-success');
       const fileData = await ffmpeg.readFile(outputName);
       const blob = new Blob([fileData.buffer], { type: mode === 'mp3' ? 'audio/mpeg' : 'video/mp4' });
@@ -284,6 +315,7 @@
   </script>
 </body>
 </html>
+
 
 
 
