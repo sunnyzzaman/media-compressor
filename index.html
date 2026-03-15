@@ -18,8 +18,6 @@
     .log-info { color: #7dd3fc; }
     .log-error { color: #ff7675; }
     .log-success { color: #86efac; }
-    
-    /* Queue UI Styles */
     #fileQueue { margin-top: 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px; max-height: 150px; overflow-y: auto; }
     .queue-item { display: flex; justify-content: space-between; padding: 6px 4px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
     .queue-item:last-child { border-bottom: none; }
@@ -28,7 +26,7 @@
 </head>
 <body>
   <div class="card">
-    <h2>Media Converter & Compressor — Cloud Batch Processing</h2>
+    <h2>Media Converter &amp; Compressor &mdash; Cloud Batch Processing</h2>
     <div style="display:flex; gap:24px; margin-top:18px;">
       <div style="flex:1">
         <label class="block" style="font-weight:600; color:#475569; margin-bottom:6px; display:block;">1. Select Videos</label>
@@ -37,8 +35,7 @@
           <div style="color:#64748b;">Click to browse or drag multiple files here</div>
         </div>
 
-        <div id="fileQueue" class="hidden">
-          </div>
+        <div id="fileQueue" class="hidden"></div>
 
         <div style="margin-top:20px">
           <label style="font-weight:600; color:#475569; display:block;">2. Compression Settings</label>
@@ -82,13 +79,13 @@
 
   <script>
   const $ = s => document.querySelector(s);
-  const logEl = $('#log'), startBtn = $('#startBtn'), 
+  const logEl = $('#log'), startBtn = $('#startBtn'),
         fileInput = $('#fileInput'), dropzone = $('#dropzone'), fileQueueEl = $('#fileQueue'),
         progressBar = $('#progressBar'), progressText = $('#progressText'), etaText = $('#etaText'),
         targetMBInput = $('#targetMB'), resSelect = $('#resSelect');
 
   const BASE_URL = "https://sunnyzzaman-media-compressor-backend.hf.space";
-  let selectedFiles = []; 
+  let selectedFiles = [];
 
   function log(msg, cls='log-info') {
     const time = new Date().toLocaleTimeString();
@@ -99,33 +96,30 @@
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  $('#clearLog').addEventListener('click', ()=> logEl.innerHTML = '');
-  dropzone.addEventListener('click', ()=> fileInput.click());
-  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.style.borderColor='#2563eb'; });
-  dropzone.addEventListener('dragleave', e => { dropzone.style.borderColor=''; });
-  
-  dropzone.addEventListener('drop', e => { 
-    e.preventDefault(); 
-    dropzone.style.borderColor='';
-    if(e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files); 
+  $('#clearLog').addEventListener('click', () => logEl.innerHTML = '');
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.style.borderColor = '#2563eb'; });
+  dropzone.addEventListener('dragleave', () => { dropzone.style.borderColor = ''; });
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.style.borderColor = '';
+    if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files);
   });
-  
-  fileInput.addEventListener('change', e => { 
-    if(e.target.files?.length) handleFiles(e.target.files); 
+  fileInput.addEventListener('change', e => {
+    if (e.target.files?.length) handleFiles(e.target.files);
   });
 
-  function handleFiles(files){
+  function handleFiles(files) {
     let addedCount = 0;
-    for(let i = 0; i < files.length; i++) {
-      if(files[i].type.startsWith('video/')){ 
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].type.startsWith('video/')) {
         selectedFiles.push({ file: files[i], status: 'Queued', downloadUrl: null });
         addedCount++;
       } else {
         log(`Skipped ${files[i].name} (Not a valid video)`, 'log-error');
       }
     }
-    
-    if(addedCount > 0) {
+    if (addedCount > 0) {
       log(`Added ${addedCount} file(s) to the queue.`);
       fileQueueEl.classList.remove('hidden');
       startBtn.disabled = false;
@@ -137,130 +131,157 @@
     fileQueueEl.innerHTML = '';
     selectedFiles.forEach(item => {
       let statusHtml = '';
-      
-      // If the file is done, show a clickable Download link
       if (item.status === 'Done' && item.downloadUrl) {
-        statusHtml = `<a href="${item.downloadUrl}" download="compressed_${item.file.name.replace(/[^a-zA-Z0-9 .-_]/g, '')}" style="color:#10b981; font-weight:600; text-decoration:underline; cursor:pointer;">Download</a>`;
+        statusHtml = `<a href="${item.downloadUrl}" download="compressed_${item.file.name.replace(/[^a-zA-Z0-9 .\-_]/g, '')}" style="color:#10b981; font-weight:600; text-decoration:underline; cursor:pointer;">Download</a>`;
       } else {
-        let statusColor = '#64748b'; 
-        if(item.status === 'Uploading...' || item.status === 'Cooking...') statusColor = '#2563eb'; 
-        if(item.status.includes('Error')) statusColor = '#ef4444'; 
+        let statusColor = '#64748b';
+        if (item.status === 'Uploading...' || item.status === 'Cooking...') statusColor = '#2563eb';
+        if (item.status.includes('Error')) statusColor = '#ef4444';
         statusHtml = `<span style="font-weight:600; color:${statusColor}">${item.status}</span>`;
       }
-
       const div = document.createElement('div');
       div.className = 'queue-item';
-      div.innerHTML = `
-        <span class="queue-name" title="${item.file.name}">${item.file.name}</span>
-        ${statusHtml}
-      `;
+      div.innerHTML = `<span class="queue-name" title="${item.file.name}">${item.file.name}</span>${statusHtml}`;
       fileQueueEl.appendChild(div);
     });
   }
 
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
-    
+
     for (let i = 0; i < selectedFiles.length; i++) {
       if (selectedFiles[i].status === 'Done' || selectedFiles[i].status.includes('Error')) continue;
 
       const currentFile = selectedFiles[i].file;
       selectedFiles[i].status = 'Uploading...';
       renderQueue();
-      log(`--- Processing File ${i + 1} of ${selectedFiles.length}: ${currentFile.name} ---`, 'log-info');
-      etaText.textContent = `File ${i + 1}/${selectedFiles.length}: Slicing into chunks...`;
+      log(`--- Processing File ${i + 1} of ${selectedFiles.length}: ${currentFile.name} ---`);
+      etaText.textContent = `File ${i + 1}/${selectedFiles.length}: Initialising job...`;
       progressBar.style.width = '0%';
       progressText.textContent = '0%';
 
       const jobId = Math.random().toString(36).substring(2, 15);
-      const CHUNK_SIZE = 5 * 1024 * 1024; 
+      const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per chunk
       const totalChunks = Math.ceil(currentFile.size / CHUNK_SIZE);
+
+      // ── Step 1: Register the job ───────────────────────────────────────────
+      // Must happen before any chunk is sent. The backend uses this to
+      // validate job_id on every chunk request and track arrival state.
+      try {
+        const initData = new FormData();
+        initData.append('job_id', jobId);
+        const initRes = await fetch(`${BASE_URL}/init_job/`, { method: 'POST', body: initData });
+        if (!initRes.ok) {
+          const body = await initRes.text();
+          throw new Error(`HTTP ${initRes.status}: ${body}`);
+        }
+        log(`Job initialised (${totalChunks} chunk${totalChunks > 1 ? 's' : ''} to upload)`);
+      } catch (err) {
+        log(`Failed to initialise job: ${err.message}`, 'log-error');
+        selectedFiles[i].status = 'Error: Init Failed';
+        renderQueue();
+        continue;
+      }
+
+      // ── Step 2: Upload chunks sequentially ────────────────────────────────
+      // Each chunk is sent with its 0-based index and the total chunk count.
+      // The backend writes each to its own .part slot so a retry safely
+      // overwrites only that slot — already-landed chunks stay intact.
+      // Assembly into the final file only happens once ALL chunks arrive.
       let uploadFailed = false;
-      
       for (let c = 0; c < totalChunks; c++) {
         const start = c * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, currentFile.size);
         const chunk = currentFile.slice(start, end);
+
         const formData = new FormData();
         formData.append('file', chunk);
         formData.append('job_id', jobId);
-        
+        formData.append('chunk_index', c);            // 0-based position of this chunk
+        formData.append('total_chunks', totalChunks); // backend needs this to know when upload is complete
+
         try {
           const response = await fetch(`${BASE_URL}/upload_chunk/`, { method: 'POST', body: formData });
-          if (!response.ok) throw new Error('Upload rejected');
-          
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`HTTP ${response.status}: ${body}`);
+          }
+
           const percentComplete = Math.round(((c + 1) / totalChunks) * 50);
           progressBar.style.width = percentComplete + '%';
           progressText.textContent = percentComplete + '%';
+          etaText.textContent = `File ${i + 1}/${selectedFiles.length}: Chunk ${c + 1}/${totalChunks} uploaded`;
         } catch (err) {
-          log(`Failed to upload chunk ${c + 1}.`, 'log-error');
+          log(`Failed to upload chunk ${c + 1}/${totalChunks}: ${err.message}`, 'log-error');
           selectedFiles[i].status = 'Error: Upload Failed';
           renderQueue();
           uploadFailed = true;
-          break; 
+          break;
         }
       }
-      
-      if (uploadFailed) continue; 
-      
+
+      if (uploadFailed) continue;
+
+      // ── Step 3: Start compression ──────────────────────────────────────────
       selectedFiles[i].status = 'Cooking...';
       renderQueue();
-      log(`All chunks uploaded! Starting background compression for ${currentFile.name}...`, 'log-info');
+      log(`All chunks uploaded! Starting compression for ${currentFile.name}...`);
       etaText.textContent = `File ${i + 1}/${selectedFiles.length}: Processing on server...`;
-      progressBar.style.width = '75%'; 
+      progressBar.style.width = '75%';
       progressText.textContent = 'Cooking...';
-      
+
       const compressData = new FormData();
       compressData.append('job_id', jobId);
       compressData.append('original_name', currentFile.name);
       compressData.append('target_mb', targetMBInput.value);
       compressData.append('resolution', resSelect.value);
-      
+
       try {
         const startRes = await fetch(`${BASE_URL}/start_compress/`, { method: 'POST', body: compressData });
-        if (!startRes.ok) throw new Error('Failed to start job');
-        
+        if (!startRes.ok) {
+          const body = await startRes.text();
+          throw new Error(`HTTP ${startRes.status}: ${body}`);
+        }
+
+        // ── Step 4: Poll for completion ──────────────────────────────────────
         await new Promise((resolve) => {
           const pollInterval = setInterval(async () => {
             try {
               const statusRes = await fetch(`${BASE_URL}/status/${jobId}`);
               const statusData = await statusRes.json();
-              
-              if (statusData.status === "processing") {
-                // Keep waiting
-              } else if (statusData.status === "done") {
+
+              if (statusData.status === 'processing') {
+                // still running — keep polling
+              } else if (statusData.status === 'done') {
                 clearInterval(pollInterval);
-                log(`Compression complete for ${currentFile.name}!`, 'log-success');
+                const outMB = statusData.output_size_mb ? ` (${statusData.output_size_mb} MB)` : '';
+                log(`Compression complete for ${currentFile.name}${outMB}!`, 'log-success');
                 progressBar.style.width = '100%';
                 progressText.textContent = '100%';
-                
                 selectedFiles[i].status = 'Done';
                 selectedFiles[i].downloadUrl = `${BASE_URL}/download/${jobId}`;
                 renderQueue();
-                
-                // Attempt auto-download
+                // auto-trigger download
                 const a = document.createElement('a');
                 a.href = selectedFiles[i].downloadUrl;
-                a.download = `compressed_${currentFile.name.replace(/[^a-zA-Z0-9 .-_]/g, '')}`;
-                a.click(); 
-
-                resolve(); 
-                
-              } else if (statusData.status === "error") {
+                a.download = `compressed_${currentFile.name.replace(/[^a-zA-Z0-9 .\-_]/g, '')}`;
+                a.click();
+                resolve();
+              } else if (statusData.status === 'error') {
                 clearInterval(pollInterval);
-                log(`Server Error: ${statusData.message}`, 'log-error');
+                log(`Server error: ${statusData.message}`, 'log-error');
                 selectedFiles[i].status = 'Error: Server Crash';
                 renderQueue();
-                resolve(); 
+                resolve();
               }
             } catch (pollErr) {
-              console.warn("Polling paused, reconnecting...");
+              console.warn('Polling paused, reconnecting...');
             }
           }, 5000);
         });
-        
+
       } catch (err) {
-        log(`Network Error while starting ${currentFile.name}.`, 'log-error');
+        log(`Network error while starting ${currentFile.name}: ${err.message}`, 'log-error');
         selectedFiles[i].status = 'Error: Network';
         renderQueue();
       }
