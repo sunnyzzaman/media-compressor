@@ -55,6 +55,13 @@
           </div>
         </div>
 
+        <!-- Smart suggestion banner — shown/updated by JS when files + target size are set -->
+        <div id="suggestionBox" style="display:none; margin-top:16px; padding:12px 14px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; font-size:13px; color:#1e40af;">
+          <div style="font-weight:600; margin-bottom:6px;">&#x1f9e0; Smart Suggestion</div>
+          <div id="suggestionText" style="line-height:1.6; color:#334155;"></div>
+          <button id="applyBtn" style="margin-top:10px; padding:5px 14px; border-radius:6px; background:#2563eb; color:#fff; border:none; cursor:pointer; font-size:12px; font-weight:600;">Apply Suggested Settings</button>
+        </div>
+
         <div style="margin-top:24px">
           <button id="startBtn" class="btn" style="width:100%; padding:12px; font-size:15px;" disabled>Start Batch Compression</button>
         </div>
@@ -144,6 +151,10 @@
       div.innerHTML = `<span class="queue-name" title="${item.file.name}">${item.file.name}</span>${statusHtml}`;
       fileQueueEl.appendChild(div);
     });
+
+    // Call suggestion logic directly here — avoids the hoisting/infinite-loop bug
+    // that occurs when trying to patch renderQueue from outside with a wrapper function.
+    updateSuggestion();
   }
 
   startBtn.addEventListener('click', async () => {
@@ -161,15 +172,14 @@
       progressText.textContent = '0%';
 
       const jobId = Math.random().toString(36).substring(2, 15);
-      const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per chunk
+      const CHUNK_SIZE = 5 * 1024 * 1024;
       const totalChunks = Math.ceil(currentFile.size / CHUNK_SIZE);
 
-      // ── Step 1: Register the job ───────────────────────────────────────────
-      // Must happen before any chunk is sent. The backend uses this to
-      // validate job_id on every chunk request and track arrival state.
+      // Step 1: Wake up HF space + register job
       try {
         const initData = new FormData();
         initData.append('job_id', jobId);
+        await fetch(`${BASE_URL}/health`).catch(() => console.log("Health ping failed, moving on"));
         const initRes = await fetch(`${BASE_URL}/init_job/`, { method: 'POST', body: initData });
         if (!initRes.ok) {
           const body = await initRes.text();
@@ -183,30 +193,23 @@
         continue;
       }
 
-      // ── Step 2: Upload chunks sequentially ────────────────────────────────
-      // Each chunk is sent with its 0-based index and the total chunk count.
-      // The backend writes each to its own .part slot so a retry safely
-      // overwrites only that slot — already-landed chunks stay intact.
-      // Assembly into the final file only happens once ALL chunks arrive.
+      // Step 2: Upload chunks
       let uploadFailed = false;
       for (let c = 0; c < totalChunks; c++) {
         const start = c * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, currentFile.size);
         const chunk = currentFile.slice(start, end);
-
         const formData = new FormData();
         formData.append('file', chunk);
         formData.append('job_id', jobId);
-        formData.append('chunk_index', c);            // 0-based position of this chunk
-        formData.append('total_chunks', totalChunks); // backend needs this to know when upload is complete
-
+        formData.append('chunk_index', c);
+        formData.append('total_chunks', totalChunks);
         try {
           const response = await fetch(`${BASE_URL}/upload_chunk/`, { method: 'POST', body: formData });
           if (!response.ok) {
             const body = await response.text();
             throw new Error(`HTTP ${response.status}: ${body}`);
           }
-
           const percentComplete = Math.round(((c + 1) / totalChunks) * 50);
           progressBar.style.width = percentComplete + '%';
           progressText.textContent = percentComplete + '%';
@@ -222,7 +225,7 @@
 
       if (uploadFailed) continue;
 
-      // ── Step 3: Start compression ──────────────────────────────────────────
+      // Step 3: Start compression
       selectedFiles[i].status = 'Cooking...';
       renderQueue();
       log(`All chunks uploaded! Starting compression for ${currentFile.name}...`);
@@ -243,15 +246,14 @@
           throw new Error(`HTTP ${startRes.status}: ${body}`);
         }
 
-        // ── Step 4: Poll for completion ──────────────────────────────────────
+        // Step 4: Poll for completion
         await new Promise((resolve) => {
           const pollInterval = setInterval(async () => {
             try {
               const statusRes = await fetch(`${BASE_URL}/status/${jobId}`);
               const statusData = await statusRes.json();
-
               if (statusData.status === 'processing') {
-                // still running — keep polling
+                // still running
               } else if (statusData.status === 'done') {
                 clearInterval(pollInterval);
                 const outMB = statusData.output_size_mb ? ` (${statusData.output_size_mb} MB)` : '';
@@ -261,7 +263,6 @@
                 selectedFiles[i].status = 'Done';
                 selectedFiles[i].downloadUrl = `${BASE_URL}/download/${jobId}`;
                 renderQueue();
-                // auto-trigger download
                 const a = document.createElement('a');
                 a.href = selectedFiles[i].downloadUrl;
                 a.download = `compressed_${currentFile.name.replace(/[^a-zA-Z0-9 .\-_]/g, '')}`;
@@ -291,6 +292,55 @@
     etaText.textContent = 'Batch Processing Finished.';
     startBtn.disabled = false;
   });
+
+  // Smart suggestion logic
+  let suggestedResolution = '480';
+
+  function updateSuggestion() {
+    if (selectedFiles.length === 0) {
+      document.getElementById('suggestionBox').style.display = 'none';
+      return;
+    }
+    const totalOriginalMB = selectedFiles.reduce((sum, f) => sum + f.file.size / (1024 * 1024), 0);
+    const targetMB = parseFloat(targetMBInput.value) || 50;
+    const ratio = targetMB / totalOriginalMB;
+    let resolution, label, reasoning;
+    if (ratio >= 0.85) {
+      resolution = '720';
+      label      = 'Light compression (keeping most quality)';
+      reasoning  = `You're compressing to ${Math.round(ratio * 100)}% of the original. 720p is recommended to preserve visual quality.`;
+    } else if (ratio >= 0.5) {
+      resolution = '480';
+      label      = 'Balanced compression';
+      reasoning  = `You're compressing to ${Math.round(ratio * 100)}% of the original. 480p gives a good balance of quality vs file size for meeting recordings.`;
+    } else if (ratio >= 0.25) {
+      resolution = '360';
+      label      = 'Heavy compression';
+      reasoning  = `You're compressing to ${Math.round(ratio * 100)}% of the original. 360p is recommended — at this bitrate higher resolutions won't look better anyway.`;
+    } else {
+      resolution = '360';
+      label      = 'Very aggressive compression';
+      reasoning  = `You're targeting ${Math.round(ratio * 100)}% of the original size. Quality will be noticeably degraded. Consider a slightly higher target size.`;
+    }
+    suggestedResolution = resolution;
+    const currentRes = resSelect.value;
+    const resLabel   = { '720': '720p', '480': '480p', '360': '360p' };
+    const alreadyMatch = currentRes === resolution;
+    document.getElementById('suggestionText').innerHTML =
+      `<strong>${label}</strong><br>${reasoning}`
+      + (alreadyMatch
+        ? `<br><span style="color:#16a34a">&#x2713; Your current resolution (${resLabel[currentRes]}) matches the suggestion.</span>`
+        : `<br>Suggested resolution: <strong>${resLabel[resolution]}</strong> (currently ${resLabel[currentRes] || currentRes})`);
+    document.getElementById('suggestionBox').style.display = 'block';
+  }
+
+  document.getElementById('applyBtn').addEventListener('click', () => {
+    if (suggestedResolution) resSelect.value = suggestedResolution;
+    updateSuggestion();
+  });
+
+  targetMBInput.addEventListener('input', updateSuggestion);
+  resSelect.addEventListener('change', updateSuggestion);
   </script>
 </body>
 </html>
